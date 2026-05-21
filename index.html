@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaflet GeoTIFF com Gráfico de Carregamento (GOES-19)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #111; }
+        #map { width: 100%; height: 100vh; z-index: 1; }
+        
+        /* Painel Flutuante de Carregamento */
+        #loading-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            text-align: center;
+            width: 400px;
+            backdrop-filter: blur(5px);
+            transition: opacity 0.5s ease;
+        }
+        
+        h3 { margin-top: 0; color: #222; font-size: 18px; }
+        #status-text { font-size: 14px; color: #555; margin-bottom: 10px; }
+        
+        /* Barra de Progresso Clássica */
+        .progress-container { width: 100%; background: #e0e0e0; border-radius: 6px; height: 12px; overflow: hidden; margin-bottom: 15px; }
+        .progress-bar { width: 0%; height: 100%; background: #0076ff; transition: width 0.1s linear; }
+        
+        /* Contêiner do Gráfico */
+        #chart-container { width: 100%; height: 180px; }
+    </style>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+    
+    <script src="https://unpkg.com/georaster/dist/georaster.browser.bundle.min.js"></script>
+    <script src="https://unpkg.com/georaster-layer-for-leaflet/dist/georaster-layer-for-leaflet.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <div id="loading-panel">
+        <h3>Carregando Imagem do Satélite GOES-19</h3>
+        <p id="status-text">Conectando ao servidor da NOAA...</p>
+        <div class="progress-container">
+            <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <div id="chart-container">
+            <canvas id="loadingChart"></canvas>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // URL da imagem GeoTIFF fornecida
+        const tiffUrl = 'https://cdn.star.nesdis.noaa.gov/GOES19/ABI/FD/GEOCOLOR/GOES19-ABI-FD-GEOCOLOR-10848x10848.tif';
+
+        // Inicializa o mapa focado nas Américas
+        const map = L.map('map').setView([-15, -60], 3);
+        
+        // Camada base escura (combina melhor com imagens de satélite meteorológico)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap © CARTO'
+        }).addTo(map);
+
+        // Inicialização do Gráfico com Chart.js
+        const ctx = document.getElementById('loadingChart').getContext('2d');
+        const loadingChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], // Eixo X: Tempo (s)
+                datasets: [{
+                    label: 'Dados Baixados (Megabytes)',
+                    data: [], // Eixo Y: MBs acumulados
+                    borderColor: '#0076ff',
+                    backgroundColor: 'rgba(0, 118, 255, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    pointRadius: 0 // Remove pontos para focar na linha de evolução
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { title: { display: true, text: 'Tempo decorrido (segundos)', color: '#333' } },
+                    y: { title: { display: true, text: 'Volume (MB)', color: '#333' }, beginAtZero: true }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Função assíncrona para gerenciar o download em fluxo (Stream) e plotar no mapa
+        async function fetchAndPlotGeoTIFF() {
+            try {
+                const response = await fetch(tiffUrl);
+                if (!response.ok) throw new Error(`Erro HTTP! Código: ${response.status}`);
+
+                // Tamanho total do arquivo vindo do cabeçalho HTTP
+                const contentLength = +response.headers.get('Content-Length');
+                const reader = response.body.getReader();
+                
+                let receivedLength = 0;
+                let chunks = [];
+                let startTime = Date.now();
+                let lastChartUpdateTime = Date.now();
+
+                // Loop para ler os pedaços (chunks) do arquivo à medida que chegam na rede
+                while(true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+
+                    chunks.push(value);
+                    receivedLength += value.length;
+
+                    const now = Date.now();
+                    // Atualiza o gráfico e a barra a cada 150ms para evitar engasgos visuais
+                    if (now - lastChartUpdateTime > 150 || receivedLength === contentLength) {
+                        lastChartUpdateTime = now;
+                        
+                        const elapsedSeconds = ((now - startTime) / 1000).toFixed(1);
+                        const mbReceived = (receivedLength / (1024 * 1024)).toFixed(2);
+                        
+                        if (contentLength) {
+                            const percent = ((receivedLength / contentLength) * 100).toFixed(1);
+                            const mbTotal = (contentLength / (1024 * 1024)).toFixed(1);
+                            
+                            document.getElementById('status-text').innerText = `Baixando: ${mbReceived} MB de ${mbTotal} MB (${percent}%)`;
+                            document.getElementById('progress-bar').style.width = `${percent}%`;
+                        } else {
+                            document.getElementById('status-text').innerText = `Baixando: ${mbReceived} MB (Tamanho total oculto)`;
+                        }
+
+                        // Atualiza os pontos do Gráfico de evolução de transferência
+                        loadingChart.data.labels.push(elapsedSeconds);
+                        loadingChart.data.datasets[0].data.push(mbReceived);
+                        loadingChart.update('none'); // atualiza instantaneamente sem animações internas lentas
+                    }
+                }
+
+                // Finalizado o download, une todos os pedaços binários em um único buffer
+                document.getElementById('status-text').innerText = "Download concluído! Processando matriz GeoTIFF...";
+                let chunksAll = new Uint8Array(receivedLength);
+                let position = 0;
+                for(let chunk of chunks) {
+                    chunksAll.set(chunk, position);
+                    position += chunk.length;
+                }
+
+                // Transforma em ArrayBuffer requisitado pelo georaster
+                const arrayBuffer = chunksAll.buffer;
+
+                // Transforma os dados brutos no formato GeoRaster
+                parseGeoRaster(arrayBuffer).then(georaster => {
+                    
+                    // Configura a camada GeoTIFF para o Leaflet
+                    const geoTiffLayer = new GeoRasterLayer({
+                        georaster: georaster,
+                        opacity: 0.85,
+                        // Resolução interna de renderização do canvas do mapa. 
+                        // Como a imagem original tem 10mil px, limitar a resolução evita estouro de memória no navegador.
+                        resolution: 128 
+                    });
+
+                    // Plota a camada sobre o mapa base
+                    geoTiffLayer.addTo(map);
+                    
+                    // Enquadra a visão do mapa nos limites exatos da imagem do satélite
+                    map.fitBounds(geoTiffLayer.getBounds());
+
+                    // Esconde suavemente o painel de carregamento
+                    document.getElementById('loading-panel').style.opacity = '0';
+                    setTimeout(() => {
+                        document.getElementById('loading-panel').style.display = 'none';
+                    }, 500);
+
+                }).catch(err => {
+                    document.getElementById('status-text').innerText = "Erro ao processar GeoTIFF: " + err.message;
+                    console.error(err);
+                });
+
+            } catch (error) {
+                document.getElementById('status-text').innerText = "Falha no download/CORS: " + error.message;
+                document.getElementById('status-text').style.color = '#ff3b30';
+                console.error(error);
+            }
+        }
+
+        // Inicializa o fluxo completo ao abrir a tela
+        fetchAndPlotGeoTIFF();
+    </script>
+</body>
+</html>
