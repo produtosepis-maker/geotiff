@@ -68,7 +68,7 @@
         const tiffUrl = 'https://cdn.star.nesdis.noaa.gov/GOES19/ABI/FD/GEOCOLOR/GOES19-ABI-FD-GEOCOLOR-10848x10848.tif';
 
         // Inicializa o mapa focado nas Américas
-        const map = L.map('map').setView([-15, -60], 3);
+        const map = L.map('map').setView([-15, -60], 6);
         
         // Camada base escura (combina melhor com imagens de satélite meteorológico)
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -168,7 +168,7 @@
                     // Configura a camada GeoTIFF para o Leaflet
                     const geoTiffLayer = new GeoRasterLayer({
                         georaster: georaster,
-                        opacity: 0.85,
+                        opacity: 0.75,
                         // Resolução interna de renderização do canvas do mapa. 
                         // Como a imagem original tem 10mil px, limitar a resolução evita estouro de memória no navegador.
                         resolution: 128 
