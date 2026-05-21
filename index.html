@@ -163,7 +163,7 @@
                 const arrayBuffer = chunksAll.buffer;
 
                 // Transforma os dados brutos no formato GeoRaster
-                parseGeoRaster(arrayBuffer).then(georaster => {
+                parseGeoraster(arrayBuffer).then(georaster => {
                     
                     // Configura a camada GeoTIFF para o Leaflet
                     const geoTiffLayer = new GeoRasterLayer({
